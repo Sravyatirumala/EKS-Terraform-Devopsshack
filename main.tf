@@ -1,5 +1,5 @@
 provider "aws" {
-  region = "ap-south-1"
+  region = "us-east-2"
 }
 
 # --------------------
@@ -55,7 +55,7 @@ resource "aws_route_table_association" "a" {
 # --------------------
 # Security Groups
 # --------------------
-resource "aws_security_group" "devopsshack_cluster_sg" {
+resource "aws_security_group" "SG2" {
   vpc_id = aws_vpc.devopsshack_vpc.id
 
   # EKS Control plane needs to talk to nodes
@@ -96,7 +96,7 @@ resource "aws_security_group" "devopsshack_node_sg" {
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = ["YOUR_PUBLIC_IP/32"]
+    cidr_blocks = ["3.21.246.76/32"]
     description = "SSH access"
   }
 
@@ -116,7 +116,7 @@ resource "aws_security_group" "devopsshack_node_sg" {
 # IAM Roles
 # --------------------
 resource "aws_iam_role" "devopsshack_cluster_role" {
-  name = "devopsshack-cluster-role"
+  name = "devopsshack-cluster-role-v2"
 
   assume_role_policy = <<EOF
 {
@@ -145,7 +145,7 @@ resource "aws_iam_role_policy_attachment" "devopsshack_service_policy" {
 }
 
 resource "aws_iam_role" "devopsshack_node_group_role" {
-  name = "devopsshack-node-group-role"
+  name = "devopsshack-node-group-role-v2"
 
   assume_role_policy = <<EOF
 {
