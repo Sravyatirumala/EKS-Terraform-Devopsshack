@@ -2,6 +2,9 @@ provider "aws" {
   region = "ap-south-1"
 }
 
+# --------------------
+# VPC + Subnets
+# --------------------
 resource "aws_vpc" "devopsshack_vpc" {
   cidr_block = "10.0.0.0/16"
 
@@ -49,8 +52,20 @@ resource "aws_route_table_association" "a" {
   route_table_id = aws_route_table.devopsshack_route_table.id
 }
 
+# --------------------
+# Security Groups
+# --------------------
 resource "aws_security_group" "devopsshack_cluster_sg" {
   vpc_id = aws_vpc.devopsshack_vpc.id
+
+  # EKS Control plane needs to talk to nodes
+  ingress {
+    from_port       = 443
+    to_port         = 443
+    protocol        = "tcp"
+    cidr_blocks     = ["0.0.0.0/0"]
+    description     = "Allow EKS Control Plane"
+  }
 
   egress {
     from_port   = 0
@@ -67,11 +82,22 @@ resource "aws_security_group" "devopsshack_cluster_sg" {
 resource "aws_security_group" "devopsshack_node_sg" {
   vpc_id = aws_vpc.devopsshack_vpc.id
 
+  # Allow cluster to connect to worker nodes
   ingress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
+    from_port       = 0
+    to_port         = 65535
+    protocol        = "tcp"
+    security_groups = [aws_security_group.devopsshack_cluster_sg.id]
+    description     = "Allow cluster to node communication"
+  }
+
+  # Allow SSH from your IP only (change CIDR to your IP!)
+  ingress {
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["YOUR_PUBLIC_IP/32"]
+    description = "SSH access"
   }
 
   egress {
@@ -86,36 +112,9 @@ resource "aws_security_group" "devopsshack_node_sg" {
   }
 }
 
-resource "aws_eks_cluster" "devopsshack" {
-  name     = "devopsshack-cluster"
-  role_arn = aws_iam_role.devopsshack_cluster_role.arn
-
-  vpc_config {
-    subnet_ids         = aws_subnet.devopsshack_subnet[*].id
-    security_group_ids = [aws_security_group.devopsshack_cluster_sg.id]
-  }
-}
-
-resource "aws_eks_node_group" "devopsshack" {
-  cluster_name    = aws_eks_cluster.devopsshack.name
-  node_group_name = "devopsshack-node-group"
-  node_role_arn   = aws_iam_role.devopsshack_node_group_role.arn
-  subnet_ids      = aws_subnet.devopsshack_subnet[*].id
-
-  scaling_config {
-    desired_size = 3
-    max_size     = 3
-    min_size     = 3
-  }
-
-  instance_types = ["t2.medium"]
-
-  remote_access {
-    ec2_ssh_key = var.ssh_key_name
-    source_security_group_ids = [aws_security_group.devopsshack_node_sg.id]
-  }
-}
-
+# --------------------
+# IAM Roles
+# --------------------
 resource "aws_iam_role" "devopsshack_cluster_role" {
   name = "devopsshack-cluster-role"
 
@@ -138,6 +137,11 @@ EOF
 resource "aws_iam_role_policy_attachment" "devopsshack_cluster_role_policy" {
   role       = aws_iam_role.devopsshack_cluster_role.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
+}
+
+resource "aws_iam_role_policy_attachment" "devopsshack_service_policy" {
+  role       = aws_iam_role.devopsshack_cluster_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSServicePolicy"
 }
 
 resource "aws_iam_role" "devopsshack_node_group_role" {
@@ -172,4 +176,51 @@ resource "aws_iam_role_policy_attachment" "devopsshack_node_group_cni_policy" {
 resource "aws_iam_role_policy_attachment" "devopsshack_node_group_registry_policy" {
   role       = aws_iam_role.devopsshack_node_group_role.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+}
+
+# --------------------
+# EKS Cluster
+# --------------------
+resource "aws_eks_cluster" "devopsshack" {
+  name     = "devopsshack-cluster"
+  role_arn = aws_iam_role.devopsshack_cluster_role.arn
+
+  vpc_config {
+    subnet_ids         = aws_subnet.devopsshack_subnet[*].id
+    security_group_ids = [aws_security_group.devopsshack_cluster_sg.id]
+  }
+
+  depends_on = [
+    aws_iam_role_policy_attachment.devopsshack_cluster_role_policy,
+    aws_iam_role_policy_attachment.devopsshack_service_policy
+  ]
+}
+
+# --------------------
+# EKS Node Group
+# --------------------
+resource "aws_eks_node_group" "devopsshack" {
+  cluster_name    = aws_eks_cluster.devopsshack.name
+  node_group_name = "devopsshack-node-group"
+  node_role_arn   = aws_iam_role.devopsshack_node_group_role.arn
+  subnet_ids      = aws_subnet.devopsshack_subnet[*].id
+
+  scaling_config {
+    desired_size = 3
+    max_size     = 3
+    min_size     = 3
+  }
+
+  instance_types = ["t2.medium"]
+
+  remote_access {
+    ec2_ssh_key               = var.ssh_key_name
+    source_security_group_ids = [aws_security_group.devopsshack_node_sg.id]
+  }
+
+  depends_on = [
+    aws_iam_role_policy_attachment.devopsshack_node_group_role_policy,
+    aws_iam_role_policy_attachment.devopsshack_node_group_cni_policy,
+    aws_iam_role_policy_attachment.devopsshack_node_group_registry_policy
+  ]
 }
